@@ -1,0 +1,7 @@
+{
+  "bucket": "my-backup-bucket",
+  "dest_prefix": "daily-backup",
+  "source_dir": "/Users/you/backup_src",
+  "include_extensions": [".txt", ".csv", ".xlsx", ".pdf"],
+  "skip_hidden": true
+}
