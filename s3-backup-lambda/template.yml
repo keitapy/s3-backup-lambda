@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: S3 -> S3 daily generation backup by Lambda + EventBridge
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 900        # 最大15分（大きめデータも安心）
+    MemorySize: 512
+
+Parameters:
+  SourceBucketName:
+    Type: String
+    Description: Source S3 bucket name (to read from)
+  SourcePrefix:
+    Type: String
+    Default: ""
+    Description: Optional prefix to limit scope (e.g. logs/app1/)
+  DestBucketName:
+    Type: String
+    Description: Destination S3 bucket name (to write backups)
+  DestPrefix:
+    Type: String
+    Default: daily-backup
+    Description: Destination top-level prefix (generation folder will be added under this)
+  ScheduleExpression:
+    Type: String
+    Default: cron(0 9 * * ? *)  # JST 18:00相当（リージョンのTZで動作）←必要に応じて変更
+    Description: EventBridge schedule expression
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    AllowedValues: [1,3,5,7,14,30,60,90,120,180,365]
+    Description: CloudWatch Logs retention in days
+
+Resources:
+  BackupFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handler.handler
+      Description: Copy S3 objects to generation folder (DEST_PREFIX/YYYY-MM-DD/)
+      Environment:
+        Variables:
+          SOURCE_BUCKET: !Ref SourceBucketName
+          SOURCE_PREFIX: !Ref SourcePrefix
+          DEST_BUCKET:   !Ref DestBucketName
+          DEST_PREFIX:   !Ref DestPrefix
+      Events:
+        ScheduledBackup:
+          Type: Schedule
+          Properties:
+            Schedule: !Ref ScheduleExpression
+            Name: !Sub '${AWS::StackName}-daily-schedule'
+            Description: Daily run for S3 generation backup
+            Enabled: true
+      Policies:
+        # 読み取り・書き込みの簡易ポリシー（List/Get/Put を付与）
+        - S3ReadPolicy:
+            BucketName: !Ref SourceBucketName
+        - S3WritePolicy:
+            BucketName: !Ref DestBucketName
+        # 念のため ListBucket を明示付与（prefix 絞り込みのため推奨）
+        - Statement:
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource:
+                - !Sub arn:aws:s3:::${SourceBucketName}
+                - !Sub arn:aws:s3:::${DestBucketName}
+
+  # ログ保持期間の設定（任意）
+  BackupFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${BackupFunction}
+      RetentionInDays: !Ref LogRetentionDays
+
+Outputs:
+  FunctionName:
+    Value: !Ref BackupFunction
+    Description: Deployed Lambda function name
+  Schedule:
+    Value: !Ref ScheduleExpression
+    Description: EventBridge schedule expression
